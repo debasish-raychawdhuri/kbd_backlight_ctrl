@@ -44,6 +44,7 @@ void sighandler(int signum);
 void* countdown_thread(void *unused);
 void* keyevents_thread(void *unused);
 int open_kbd_device(void);
+int open_kbd_hw_set_device(void);
 void thread_create_error(char* threadname);
 void init_param(void);
 int main();
@@ -52,6 +53,8 @@ int countdown = 0;
 int timeout = 0;
 int threads_active = 1;
 int fd = -1;
+int hfd = -1;
+char hw_level=0;
 char* kbd_events_device = NULL;
 pthread_t thread_countdown;
 pthread_t thread_keyevents;
@@ -105,6 +108,7 @@ void* keyevents_thread(void *unused)
 
 	poll_list[0].events = POLLIN;
 	poll_list[0].fd = open_kbd_device();
+	open_kbd_hw_set_device();
 	do {
 		rc = 0;
 		while ((threads_active) && (rc == 0))
@@ -116,6 +120,8 @@ void* keyevents_thread(void *unused)
 		if((threads_active) && ((poll_list[0].revents & POLLIN) == POLLIN))
 		{
 			rd = read(fd, &ev, sizeof(struct input_event));
+			//lseek(hfd,0, SEEK_SET);
+			int hrd = read(hfd, &hw_level, 1);
 			if (rd == -1)
 			{
 				fprintf(stderr, "ERROR: Reading error for device %s\n", kbd_events_device);
@@ -125,7 +131,11 @@ void* keyevents_thread(void *unused)
 			pthread_mutex_lock(&mut);
 			if (countdown < 2)
 			{
-				kbd_light_set(1);
+				if(hrd>=0)
+				{
+					kbd_light_set(hw_level - '0');
+				}
+				
 				set_kbd_light = 1;
 			}
 			countdown = timeout;
@@ -138,9 +148,11 @@ void* keyevents_thread(void *unused)
 			}
 		}
 		close(fd);
+		close(hfd);
 		if (!threads_active) break;
 		sleep(1); /* Sleep for 1 second */
 		poll_list[0].fd = open_kbd_device();
+		open_kbd_hw_set_device();
 	} while(threads_active);
 	pthread_exit(NULL);
 }
@@ -154,6 +166,16 @@ int open_kbd_device(void)
 		exit(1);
 	}
 	return fd;
+}
+
+int open_kbd_hw_set_device(void)
+{
+	hfd = open(KBD_BACKLIGHT_HW_SET_DEFAULT, O_RDONLY|O_NONBLOCK);
+        if (hfd == -1) {
+                fprintf(stderr, "ERROR: Could not open %s as read-only device. You need to be root.\n", kbd_events_device);
+                exit(1);
+        }
+	return hfd;
 }
 
 void thread_create_error(char* threadname)
